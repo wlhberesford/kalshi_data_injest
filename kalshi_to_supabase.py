@@ -132,8 +132,24 @@ def to_num(v):
     except: return None
 
 def unix_to_ts(u):
-    if u is None: return None
-    return datetime.fromtimestamp(u, tz=timezone.utc).isoformat()
+    """Accept a Unix int OR an ISO-8601 string; always return ISO-8601."""
+    if u is None:
+        return None
+    if isinstance(u, str):
+        return datetime.fromisoformat(u.replace("Z", "+00:00")).isoformat()
+    return datetime.fromtimestamp(int(u), tz=timezone.utc).isoformat()
+
+
+def to_unix_int(v) -> int:
+    """Convert a Unix int or ISO-8601 string to a plain Unix integer."""
+    if v is None:
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v)
+    try:
+        return int(datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -367,10 +383,7 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     settled_str = market.get("settlement_ts") or market.get("expiration_time")
 
     def _unix(ts_str):
-        try:
-            return int(datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp())
-        except Exception:
-            return None
+        return to_unix_int(ts_str) or None
 
     start_unix   = _unix(open_ts)  or 0
     end_unix     = _unix(close_ts) or int(time.time())
@@ -427,7 +440,7 @@ def main():
         series_raw = {"ticker": SERIES_TICKER}
     upsert(sb, "kalshi_series", [build_series_row(series_raw)], "series_ticker")
 
-    cutoff_unix = kalshi_get("/historical/cutoff").get("market_settled_ts") or 0
+    cutoff_unix = to_unix_int(kalshi_get("/historical/cutoff").get("market_settled_ts"))
     log.info("  historical cutoff : %s", unix_to_ts(cutoff_unix))
 
     events = kalshi_paginate("/events", "events",

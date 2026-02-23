@@ -1,98 +1,46 @@
-# .github/workflows/kalshi_ingest.yml
-#
-# Self-retriggering ingest workflow for Kalshi KXBTCD → Supabase.
-#
-# How it works
-# ────────────
-# 1. The job runs kalshi_to_supabase.py for up to 5h 20min (RUN_BUDGET_MINUTES=320).
-# 2. The script checkpoints its progress to `kalshi_ingest_progress` in Supabase
-#    after every 25 markets and writes needs_rerun=true|false to $GITHUB_OUTPUT.
-# 3. If needs_rerun=true, a second step triggers THIS SAME WORKFLOW again via
-#    the GitHub API — it will pick up exactly where it left off.
-# 4. Repeat until needs_rerun=false (finished=true in Supabase).
-#
-# Monitor progress any time:
-#   SELECT * FROM kalshi_ingest_status;   -- in Supabase SQL editor
-#
-# To kick off a fresh re-ingest from scratch:
-#   DELETE FROM kalshi_ingest_progress;   -- then re-trigger the workflow
-#
-# Required GitHub Secrets (Settings → Secrets → Actions):
-#   SUPABASE_URL       https://xxxx.supabase.co
-#   SUPABASE_KEY       service_role key
-#   GH_PAT             a Personal Access Token with `repo` + `workflow` scopes
-#                      (needed so the job can re-trigger itself)
-#
-# Optional secrets:
-#   KALSHI_API_KEY     leave blank — KXBTCD is public
-#   PERIOD_INTERVAL    1440 (default) | 60 | 1
-
-name: Kalshi KXBTCD → Supabase Ingest
+name: Kalshi → R2 Ingest
 
 on:
-  # Manual trigger from the Actions tab
   workflow_dispatch:
-    inputs:
-      period_interval:
-        description: "Candle interval in minutes (1 / 60 / 1440)"
-        required: false
-        default: "1440"
-
-  # The re-trigger step below fires this event via the API,
-  # so we also respond to repository_dispatch for automation.
   repository_dispatch:
-    types: [kalshi_ingest_continue]
+    types: [kalshi_ingest]
 
 jobs:
   ingest:
-    name: Ingest (self-retriggering)
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # GitHub Actions hard cap — our script stops at 320
-
-    outputs:
-      needs_rerun: ${{ steps.run_ingest.outputs.needs_rerun }}
+    timeout-minutes: 360
 
     steps:
-      # ── 1. Checkout ───────────────────────────────────────────────────────
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Python setup ───────────────────────────────────────────────────
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
       - name: Install dependencies
-        run: pip install requests supabase python-dotenv
+        run: pip install -r requirements.txt
 
-      # ── 3. Run ingest script ──────────────────────────────────────────────
-      - name: Run Kalshi → Supabase ingest
-        id: run_ingest
+      - name: Run ingest
+        id: ingest
         env:
-          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
-          KALSHI_API_KEY:      ${{ secrets.KALSHI_API_KEY }}
-          PERIOD_INTERVAL:     ${{ github.event.inputs.period_interval || '1440' }}
-          RUN_BUDGET_MINUTES:  "320"
-        run: python kalshi_to_supabase.py
+          R2_ENDPOINT_URL:      ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}
+          KALSHI_API_KEY:       ${{ secrets.KALSHI_API_KEY }}
+          PERIOD_INTERVAL:      ${{ vars.PERIOD_INTERVAL || '1440' }}
+          RUN_BUDGET_MINUTES:   "320"
+        run: python kalshi_to_r2.py
 
-      # ── 4. Re-trigger if more work remains ────────────────────────────────
-      - name: Re-trigger workflow if not finished
-        if: steps.run_ingest.outputs.needs_rerun == 'true'
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+      - name: Trigger next run if needed
+        if: steps.ingest.outputs.needs_rerun == 'true'
         run: |
-          echo "needs_rerun=true — triggering next run via repository_dispatch..."
           curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_PAT" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type":"kalshi_ingest_continue"}'
-          echo "Next run triggered ✓"
-
-      - name: Done
-        if: steps.run_ingest.outputs.needs_rerun == 'false'
-        run: echo "✅ Ingest complete — no more runs needed."
+            -d '{"event_type":"kalshi_ingest"}'
+          echo "🔁 Next run triggered"

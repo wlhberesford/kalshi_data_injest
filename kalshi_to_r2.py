@@ -69,6 +69,7 @@ R2_BUCKET_NAME       = os.environ["R2_BUCKET_NAME"]
 KALSHI_API_KEY     = os.getenv("KALSHI_API_KEY", "")
 PERIOD_INTERVAL    = int(os.getenv("PERIOD_INTERVAL", "1440"))
 RUN_BUDGET_MINUTES = int(os.getenv("RUN_BUDGET_MINUTES", "320"))
+LOOKBACK_DAYS      = int(os.getenv("LOOKBACK_DAYS", "0"))   # 0 = no limit
 
 KALSHI_BASE   = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES_TICKER = "KXBTCD"
@@ -371,9 +372,20 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     close_ts     = market.get("close_time") or market.get("expiration_time")
     settled_str  = market.get("settlement_ts") or market.get("expiration_time")
 
+    now_unix     = int(time.time())
+    lookback_ts  = (now_unix - LOOKBACK_DAYS * 86400) if LOOKBACK_DAYS else 0
+
     start_unix   = to_unix_int(open_ts)  or 0
-    end_unix     = to_unix_int(close_ts) or int(time.time())
+    end_unix     = to_unix_int(close_ts) or now_unix
     settled_unix = to_unix_int(settled_str)
+
+    # Skip markets that closed entirely before the lookback window
+    if LOOKBACK_DAYS and end_unix < lookback_ts:
+        return []
+
+    # Clamp start to lookback window
+    if LOOKBACK_DAYS:
+        start_unix = max(start_unix, lookback_ts)
 
     use_hist = settled_unix and settled_unix < cutoff_unix
     path = (f"/historical/markets/{ticker}/candlesticks" if use_hist
@@ -407,6 +419,7 @@ def main():
     log.info("  Kalshi → R2 Parquet  |  Series : %s", SERIES_TICKER)
     log.info("  Candle interval      : %d min",        PERIOD_INTERVAL)
     log.info("  Run budget           : %d min",        RUN_BUDGET_MINUTES)
+    log.info("  Lookback             : %s",            f"{LOOKBACK_DAYS}d" if LOOKBACK_DAYS else "unlimited")
     log.info("  Bucket               : %s",            R2_BUCKET_NAME)
     log.info("══════════════════════════════════════════════════")
 

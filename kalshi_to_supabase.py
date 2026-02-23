@@ -446,7 +446,8 @@ def main():
     events = kalshi_paginate("/events", "events",
                              params={"series_ticker": SERIES_TICKER,
                                      "with_nested_markets": "true"})
-    event_rows = [build_event_row(ev) for ev in events]
+    event_rows = [build_event_row(ev) for ev in events
+                  if ev.get("series_ticker", SERIES_TICKER) == SERIES_TICKER]
     upsert(sb, "kalshi_events", event_rows, "event_ticker")
 
     hist_markets = kalshi_paginate("/historical/markets", "markets",
@@ -464,9 +465,16 @@ def main():
 
     stub_rows = []
     for m in hist_markets:
+        # Only process markets that actually belong to this series.
+        # The API filter should handle this, but defensively skip any market
+        # whose series_ticker doesn't match (can leak in via nested data).
+        m_series = m.get("series_ticker") or SERIES_TICKER
+        if m_series != SERIES_TICKER:
+            continue
         m.setdefault("series_ticker", SERIES_TICKER)
         ev_t = m.get("event_ticker", "")
         if ev_t and ev_t not in known_events:
+            # Only create stub events for this series - never for foreign tickers
             stub_rows.append({"event_ticker": ev_t, "series_ticker": SERIES_TICKER,
                               "updated_at": now_iso()})
             known_events.add(ev_t)

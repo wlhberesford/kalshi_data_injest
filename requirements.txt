@@ -1,3 +1,4 @@
 requests
-supabase
+boto3
+pyarrow
 python-dotenv

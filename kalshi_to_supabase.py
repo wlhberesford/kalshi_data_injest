@@ -333,7 +333,11 @@ def build_market_row(m: dict) -> dict:
 def build_candle_rows(ticker: str, candles: list) -> list[dict]:
     rows = []
     for c in candles:
-        def _i(blk, f):  return c.get(blk, {}).get(f)
+        def _i(blk, f):
+            v = c.get(blk, {}).get(f)
+            if v is None: return None
+            try: return int(float(v))
+            except: return None
         def _d(blk, f):  return to_num(c.get(blk, {}).get(f))
         rows.append({
             "market_ticker":       ticker,

@@ -367,9 +367,19 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     now_unix     = int(time.time())
     lookback_ts  = (now_unix - LOOKBACK_DAYS * 86400) if LOOKBACK_DAYS else 0
 
-    start_unix   = to_unix_int(open_ts)  or 0
-    end_unix     = to_unix_int(close_ts) or now_unix
+    start_unix   = to_unix_int(open_ts) or 0
+    # Use the latest of close_time, expected_expiration_time, settlement_ts as end
+    expiry_ts    = (market.get("expected_expiration_time")
+                   or market.get("expiration_time")
+                   or close_ts)
+    end_unix     = max(
+        to_unix_int(close_ts)   or 0,
+        to_unix_int(expiry_ts)  or 0,
+        to_unix_int(settled_str) or 0,
+    ) or now_unix
     settled_unix = to_unix_int(settled_str)
+
+    log.info("    time range: %s → %s (%d min)", unix_to_ts(start_unix), unix_to_ts(end_unix), (end_unix - start_unix) // 60)
 
     # Skip markets that closed entirely before the lookback window
     if LOOKBACK_DAYS and end_unix < lookback_ts:

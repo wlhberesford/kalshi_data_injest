@@ -33,6 +33,7 @@ jobs:
           KALSHI_API_KEY:       ${{ secrets.KALSHI_API_KEY }}
           PERIOD_INTERVAL:      ${{ vars.PERIOD_INTERVAL || '1440' }}
           LOOKBACK_DAYS:        ${{ vars.LOOKBACK_DAYS || '0' }}
+          LAST_N_MARKETS:       ${{ vars.LAST_N_MARKETS || '0' }}
           RUN_BUDGET_MINUTES:   "320"
         run: python kalshi_to_r2.py
 

@@ -40,6 +40,8 @@ Setup
     KALSHI_API_KEY       not required for public KXBTCD data
     PERIOD_INTERVAL      1440 (daily) | 60 (hourly) | 1 (minute)
     RUN_BUDGET_MINUTES   default 320
+    LAST_N_EVENTS        fetch only the N most recently closed events (0 = all)
+    LOOKBACK_DAYS        clamp candle history to last N days (0 = no limit)
 ══════════════════════════════════════════════════════════════════════════════
 """
 
@@ -70,7 +72,7 @@ KALSHI_API_KEY     = os.getenv("KALSHI_API_KEY", "")
 PERIOD_INTERVAL    = int(os.getenv("PERIOD_INTERVAL", "1440"))
 RUN_BUDGET_MINUTES = int(os.getenv("RUN_BUDGET_MINUTES", "320"))
 LOOKBACK_DAYS      = int(os.getenv("LOOKBACK_DAYS", "0"))   # 0 = no limit
-LAST_N_MARKETS     = int(os.getenv("LAST_N_MARKETS", "0"))  # 0 = all markets
+LAST_N_EVENTS      = int(os.getenv("LAST_N_EVENTS",  "0"))  # 0 = all events
 
 KALSHI_BASE   = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES_TICKER = "KXBTCD"
@@ -419,7 +421,7 @@ def main():
     log.info("  Candle interval      : %d min",        PERIOD_INTERVAL)
     log.info("  Run budget           : %d min",        RUN_BUDGET_MINUTES)
     log.info("  Lookback             : %s",            f"{LOOKBACK_DAYS}d" if LOOKBACK_DAYS else "unlimited")
-    log.info("  Last N markets       : %s",            LAST_N_MARKETS if LAST_N_MARKETS else "all")
+    log.info("  Last N events        : %s",            LAST_N_EVENTS if LAST_N_EVENTS else "all")
     log.info("  Bucket               : %s",            R2_BUCKET_NAME)
     log.info("══════════════════════════════════════════════════")
 
@@ -492,28 +494,48 @@ def main():
                   [build_market_row(m) for m in market_index.values()])
 
     # ── Phase B: candlesticks ────────────────────────────────────────────────
-    # Sort markets by open_time so "last N" means most recent N
-    # Only include markets that have already opened (open_time <= now)
     now_iso_str = now_iso()
 
-    def _open_ts(ticker):
-        return market_index[ticker].get("open_time") or ""
+    # Build event → [markets] map from market_index
+    event_to_markets: dict[str, list[str]] = {}
+    for ticker, m in market_index.items():
+        ev_t = m.get("event_ticker", "")
+        if ev_t:
+            event_to_markets.setdefault(ev_t, []).append(ticker)
 
-    all_tickers = sorted(
-        [t for t in market_index.keys()
-         if (market_index[t].get("close_time") or "9999") <= now_iso_str],
-        key=_open_ts,
+    # Find events that have fully closed, keyed by their close time
+    # Use the latest close_time among their markets as the event close time
+    def event_close_ts(ev_ticker: str) -> str:
+        tickers = event_to_markets.get(ev_ticker, [])
+        times = [market_index[t].get("close_time") or "" for t in tickers]
+        return max(times) if times else ""
+
+    closed_events = sorted(
+        [ev for ev in event_to_markets.keys()
+         if event_close_ts(ev) and event_close_ts(ev) <= now_iso_str],
+        key=event_close_ts,
     )
-    log.info("  %d markets have already closed", len(all_tickers))
-    if LAST_N_MARKETS:
-        all_tickers = all_tickers[-LAST_N_MARKETS:]
-        log.info("  Trimmed to last %d markets by open_time", LAST_N_MARKETS)
+    log.info("  %d events have fully closed", len(closed_events))
+
+    if LAST_N_EVENTS:
+        closed_events = closed_events[-LAST_N_EVENTS:]
+        log.info("  Trimmed to last %d events", LAST_N_EVENTS)
+
+    # Flatten to ordered market tickers (sorted by open_time within each event)
+    all_tickers = []
+    for ev_t in closed_events:
+        ev_markets = sorted(
+            event_to_markets[ev_t],
+            key=lambda t: market_index[t].get("open_time") or ""
+        )
+        all_tickers.extend(ev_markets)
+
     remaining   = [t for t in all_tickers if t not in cp["completed_tickers"]]
     cp["total_markets"] = len(all_tickers)
 
     log.info("\n── Phase B: candlesticks ──────────────────────────────────")
-    log.info("  %d total | %d remaining | %d done",
-             len(all_tickers), len(remaining), len(cp["completed_tickers"]))
+    log.info("  %d markets across %d events | %d remaining | %d done",
+             len(all_tickers), len(closed_events), len(remaining), len(cp["completed_tickers"]))
 
     candles_this_run = 0
 
@@ -547,8 +569,8 @@ def main():
 
     log.info("\n══════════════════════════════════════════════════")
     log.info("  ✅  Complete!")
-    log.info("  Events    : %d", len(event_rows))
-    log.info("  Markets   : %d", len(market_index))
+    log.info("  Events    : %d (total) / %d (fetched)", len(event_rows), len(closed_events))
+    log.info("  Markets   : %d (fetched)", len(all_tickers))
     log.info("  Candles   : %d (this run)", candles_this_run)
     log.info("══════════════════════════════════════════════════")
 

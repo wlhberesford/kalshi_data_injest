@@ -346,22 +346,6 @@ def build_candle_rows(ticker: str, candles: list) -> list[dict]:
             "yes_ask_low_d":       _d("yes_ask","low_dollars"),
             "yes_ask_high_d":      _d("yes_ask","high_dollars"),
             "yes_ask_close_d":     _d("yes_ask","close_dollars"),
-            "price_open":          _i("price","open"),
-            "price_low":           _i("price","low"),
-            "price_high":          _i("price","high"),
-            "price_close":         _i("price","close"),
-            "price_mean":          _i("price","mean"),
-            "price_previous":      _i("price","previous"),
-            "price_min":           _i("price","min"),
-            "price_max":           _i("price","max"),
-            "price_open_d":        _d("price","open_dollars"),
-            "price_low_d":         _d("price","low_dollars"),
-            "price_high_d":        _d("price","high_dollars"),
-            "price_close_d":       _d("price","close_dollars"),
-            "price_mean_d":        _d("price","mean_dollars"),
-            "price_previous_d":    _d("price","previous_dollars"),
-            "price_min_d":         _d("price","min_dollars"),
-            "price_max_d":         _d("price","max_dollars"),
             "volume":        to_num(c.get("volume_fp"))        or c.get("volume"),
             "open_interest": to_num(c.get("open_interest_fp")) or c.get("open_interest"),
         })
@@ -509,10 +493,18 @@ def main():
 
     # ── Phase B: candlesticks ────────────────────────────────────────────────
     # Sort markets by open_time so "last N" means most recent N
+    # Only include markets that have already opened (open_time <= now)
+    now_iso_str = now_iso()
+
     def _open_ts(ticker):
         return market_index[ticker].get("open_time") or ""
 
-    all_tickers = sorted(market_index.keys(), key=_open_ts)
+    all_tickers = sorted(
+        [t for t in market_index.keys()
+         if (market_index[t].get("close_time") or "9999") <= now_iso_str],
+        key=_open_ts,
+    )
+    log.info("  %d markets have already closed", len(all_tickers))
     if LAST_N_MARKETS:
         all_tickers = all_tickers[-LAST_N_MARKETS:]
         log.info("  Trimmed to last %d markets by open_time", LAST_N_MARKETS)

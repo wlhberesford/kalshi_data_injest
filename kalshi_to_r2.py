@@ -462,6 +462,9 @@ def main():
         for m in (ev.get("markets") or []):
             m.setdefault("event_ticker",  ev["event_ticker"])
             m.setdefault("series_ticker", ev.get("series_ticker", SERIES_TICKER))
+            # Skip any market whose ticker doesn't start with the series prefix
+            if not m["ticker"].startswith(SERIES_TICKER):
+                continue
             market_index[m["ticker"]] = m
 
     stub_events = []

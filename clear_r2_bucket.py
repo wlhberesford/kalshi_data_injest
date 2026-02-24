@@ -6,9 +6,6 @@ Deletes every object in the R2 bucket. Run once to start fresh.
 import os
 import boto3
 from botocore.config import Config
-from dotenv import load_dotenv
-
-load_dotenv()
 
 s3 = boto3.client(
     "s3",

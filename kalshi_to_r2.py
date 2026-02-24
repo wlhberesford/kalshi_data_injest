@@ -70,6 +70,7 @@ KALSHI_API_KEY     = os.getenv("KALSHI_API_KEY", "")
 PERIOD_INTERVAL    = int(os.getenv("PERIOD_INTERVAL", "1440"))
 RUN_BUDGET_MINUTES = int(os.getenv("RUN_BUDGET_MINUTES", "320"))
 LOOKBACK_DAYS      = int(os.getenv("LOOKBACK_DAYS", "0"))   # 0 = no limit
+LAST_N_MARKETS     = int(os.getenv("LAST_N_MARKETS", "0"))  # 0 = all markets
 
 KALSHI_BASE   = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES_TICKER = "KXBTCD"
@@ -420,6 +421,7 @@ def main():
     log.info("  Candle interval      : %d min",        PERIOD_INTERVAL)
     log.info("  Run budget           : %d min",        RUN_BUDGET_MINUTES)
     log.info("  Lookback             : %s",            f"{LOOKBACK_DAYS}d" if LOOKBACK_DAYS else "unlimited")
+    log.info("  Last N markets       : %s",            LAST_N_MARKETS if LAST_N_MARKETS else "all")
     log.info("  Bucket               : %s",            R2_BUCKET_NAME)
     log.info("══════════════════════════════════════════════════")
 
@@ -489,7 +491,14 @@ def main():
                   [build_market_row(m) for m in market_index.values()])
 
     # ── Phase B: candlesticks ────────────────────────────────────────────────
-    all_tickers = sorted(market_index.keys())
+    # Sort markets by open_time so "last N" means most recent N
+    def _open_ts(ticker):
+        return market_index[ticker].get("open_time") or ""
+
+    all_tickers = sorted(market_index.keys(), key=_open_ts)
+    if LAST_N_MARKETS:
+        all_tickers = all_tickers[-LAST_N_MARKETS:]
+        log.info("  Trimmed to last %d markets by open_time", LAST_N_MARKETS)
     remaining   = [t for t in all_tickers if t not in cp["completed_tickers"]]
     cp["total_markets"] = len(all_tickers)
 

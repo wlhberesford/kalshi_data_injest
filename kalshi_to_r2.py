@@ -355,8 +355,9 @@ def build_candle_rows(ticker: str, candles: list) -> list[dict]:
 
 
 # Max candles the API will return in one request at 1-min resolution
-MAX_CANDLES_PER_REQUEST = 9000
-CHUNK_SECS = MAX_CANDLES_PER_REQUEST * 60  # ~6.25 days of minutes
+# Use 8000 to stay safely under the 9000 limit
+MAX_CANDLES_PER_REQUEST = 8000
+CHUNK_SECS = MAX_CANDLES_PER_REQUEST * 60  # seconds per chunk
 
 
 def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
@@ -368,15 +369,15 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     lookback_ts  = (now_unix - LOOKBACK_DAYS * 86400) if LOOKBACK_DAYS else 0
 
     start_unix   = to_unix_int(open_ts) or 0
-    # Use the latest of close_time, expected_expiration_time, settlement_ts as end
-    expiry_ts    = (market.get("expected_expiration_time")
-                   or market.get("expiration_time")
-                   or close_ts)
-    end_unix     = max(
-        to_unix_int(close_ts)   or 0,
-        to_unix_int(expiry_ts)  or 0,
-        to_unix_int(settled_str) or 0,
-    ) or now_unix
+    # Prefer settlement_ts (exact close), then close_time, then fall back to now
+    # Do NOT use expected_expiration_time — it can be days in the future
+    end_unix = (
+        to_unix_int(settled_str)
+        or to_unix_int(close_ts)
+        or now_unix
+    )
+    # Never extend past now — market can't have candles in the future
+    end_unix = min(end_unix, now_unix)
     settled_unix = to_unix_int(settled_str)
 
     log.info("    time range: %s → %s (%d min)", unix_to_ts(start_unix), unix_to_ts(end_unix), (end_unix - start_unix) // 60)

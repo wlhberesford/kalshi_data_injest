@@ -67,7 +67,7 @@ R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
 R2_BUCKET_NAME       = os.environ["R2_BUCKET_NAME"]
 
 KALSHI_API_KEY     = os.getenv("KALSHI_API_KEY", "")
-PERIOD_INTERVAL    = 1 #int(os.getenv("PERIOD_INTERVAL", "1440"))
+PERIOD_INTERVAL    = int(os.getenv("PERIOD_INTERVAL", "1440"))
 RUN_BUDGET_MINUTES = int(os.getenv("RUN_BUDGET_MINUTES", "320"))
 LOOKBACK_DAYS      = int(os.getenv("LOOKBACK_DAYS", "0"))   # 0 = no limit
 LAST_N_MARKETS     = int(os.getenv("LAST_N_MARKETS", "0"))  # 0 = all markets
@@ -368,6 +368,11 @@ def build_candle_rows(ticker: str, candles: list) -> list[dict]:
     return rows
 
 
+# Max candles the API will return in one request at 1-min resolution
+MAX_CANDLES_PER_REQUEST = 9000
+CHUNK_SECS = MAX_CANDLES_PER_REQUEST * 60  # ~6.25 days of minutes
+
+
 def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     open_ts      = market.get("open_time")
     close_ts     = market.get("close_time") or market.get("expiration_time")
@@ -392,13 +397,22 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     path = (f"/historical/markets/{ticker}/candlesticks" if use_hist
             else f"/series/{SERIES_TICKER}/markets/{ticker}/candlesticks")
 
-    try:
-        data = kalshi_get(path, {"start_ts": start_unix, "end_ts": end_unix,
-                                  "period_interval": PERIOD_INTERVAL})
-        return data.get("candlesticks", [])
-    except Exception as exc:
-        log.warning("  ⚠ candle fetch failed for %s: %s", ticker, exc)
-        return []
+    # Chunk requests so no single call exceeds the API's candle limit
+    chunk_secs = CHUNK_SECS if PERIOD_INTERVAL == 1 else (end_unix - start_unix + 1)
+    all_candles = []
+    chunk_start = start_unix
+    while chunk_start < end_unix:
+        chunk_end = min(chunk_start + chunk_secs, end_unix)
+        try:
+            data = kalshi_get(path, {"start_ts": chunk_start, "end_ts": chunk_end,
+                                      "period_interval": PERIOD_INTERVAL})
+            all_candles.extend(data.get("candlesticks", []))
+        except Exception as exc:
+            log.warning("  ⚠ candle fetch failed for %s [%s-%s]: %s",
+                        ticker, chunk_start, chunk_end, exc)
+        chunk_start = chunk_end + 1
+
+    return all_candles
 
 
 def candle_key(ticker: str) -> str:
@@ -471,8 +485,11 @@ def main():
 
     stub_events = []
     for m in hist_markets:
-        m_series = m.get("series_ticker") or SERIES_TICKER
+        # Filter by both series_ticker field AND ticker prefix to catch API leakage
+        m_series = m.get("series_ticker") or ""
         if m_series != SERIES_TICKER:
+            continue
+        if not m.get("ticker", "").startswith(SERIES_TICKER):
             continue
         m.setdefault("series_ticker", SERIES_TICKER)
         ev_t = m.get("event_ticker", "")

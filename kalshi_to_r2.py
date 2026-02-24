@@ -369,16 +369,15 @@ def fetch_candles(ticker: str, market: dict, cutoff_unix: int) -> list:
     lookback_ts  = (now_unix - LOOKBACK_DAYS * 86400) if LOOKBACK_DAYS else 0
 
     start_unix   = to_unix_int(open_ts) or 0
-    # Prefer settlement_ts (exact close), then close_time, then fall back to now
-    # Do NOT use expected_expiration_time — it can be days in the future
-    end_unix = (
-        to_unix_int(settled_str)
-        or to_unix_int(close_ts)
-        or now_unix
-    )
-    # Never extend past now — market can't have candles in the future
-    end_unix = min(end_unix, now_unix)
+    # Use close_time as the end — it's the actual market close
+    # Cap to now so we never request future candles
+    close_unix   = to_unix_int(close_ts)
     settled_unix = to_unix_int(settled_str)
+    end_unix     = min(close_unix or now_unix, now_unix)
+
+    # If we still don't have a valid close, skip — market isn't closed yet
+    if not close_unix or close_unix > now_unix:
+        return []
 
     log.info("    time range: %s → %s (%d min)", unix_to_ts(start_unix), unix_to_ts(end_unix), (end_unix - start_unix) // 60)
 
@@ -514,12 +513,17 @@ def main():
         if ev_t:
             event_to_markets.setdefault(ev_t, []).append(ticker)
 
-    # Find events that have fully closed, keyed by their close time
-    # Use the latest close_time among their markets as the event close time
+    # Find events that have fully closed using event metadata (strike_date / status)
+    # Build a lookup of event metadata from event_rows + stub_events
+    all_event_rows = event_rows + (stub_events if stub_events else [])
+    event_meta = {r["event_ticker"]: r for r in all_event_rows}
+
     def event_close_ts(ev_ticker: str) -> str:
+        # Use the earliest close_time across markets — all must be closed
         tickers = event_to_markets.get(ev_ticker, [])
         times = [market_index[t].get("close_time") or "" for t in tickers]
-        return max(times) if times else ""
+        times = [t for t in times if t]  # drop nulls
+        return min(times) if times else ""  # min = first market to close
 
     closed_events = sorted(
         [ev for ev in event_to_markets.keys()

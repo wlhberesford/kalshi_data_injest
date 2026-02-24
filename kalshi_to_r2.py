@@ -67,7 +67,7 @@ R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
 R2_BUCKET_NAME       = os.environ["R2_BUCKET_NAME"]
 
 KALSHI_API_KEY     = os.getenv("KALSHI_API_KEY", "")
-PERIOD_INTERVAL    = int(os.getenv("PERIOD_INTERVAL", "1440"))
+PERIOD_INTERVAL    = 1 #int(os.getenv("PERIOD_INTERVAL", "1440"))
 RUN_BUDGET_MINUTES = int(os.getenv("RUN_BUDGET_MINUTES", "320"))
 LOOKBACK_DAYS      = int(os.getenv("LOOKBACK_DAYS", "0"))   # 0 = no limit
 LAST_N_MARKETS     = int(os.getenv("LAST_N_MARKETS", "0"))  # 0 = all markets
